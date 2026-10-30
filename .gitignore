@@ -1,0 +1,5 @@
+bin/ArbolSemantico
+bin/obj/*
+!bin/obj/.gitkeep
+dist/*
+!dist/.gitkeep
