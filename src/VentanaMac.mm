@@ -3,8 +3,11 @@
 #include "LectorReglas.hpp"
 #include "MotorArbol.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 const std::string ejemploVentana =
@@ -34,41 +37,70 @@ void escribirNodo(std::ostringstream& salida, const NodoRama& nodo,
     }
 }
 
-std::string crearReporte(const std::string& entrada) {
+using Apartado = std::pair<std::string, std::string>;
+
+void agregarApartadosRamas(std::vector<Apartado>& apartados, const NodoRama& nodo) {
+    if (nodo.hijos.empty()) {
+        std::ostringstream contenido;
+        contenido << "RAMA " << nodo.id << '\n';
+        for (const FormulaEnRama& formula : nodo.formulas) {
+            contenido << (formula.aplicada ? "  ✓ " : "  · ")
+                      << mostrarFormula(formula.formula) << '\n';
+        }
+        if (nodo.cerrada) {
+            contenido << "\n✕ RAMA CERRADA\nContradicción: " << nodo.contradiccion << '\n';
+        } else {
+            contenido << "\n✓ RAMA ABIERTA\n";
+        }
+        const std::string estado = nodo.cerrada ? "cerrada" : "abierta";
+        apartados.emplace_back("Rama " + std::to_string(nodo.id) + " (" + estado + ")", contenido.str());
+        return;
+    }
+    for (const NodoRama& hijo : nodo.hijos) agregarApartadosRamas(apartados, hijo);
+}
+
+std::vector<Apartado> crearApartados(const std::string& entrada) {
     LectorReglas lector;
     const ResultadoLectura lectura = lector.analizar(entrada);
-    if (!lectura.correcto) return lectura.error;
+    if (!lectura.correcto) return {{"Error de entrada", lectura.error}};
 
     MotorArbol motor;
     const ResultadoArbol arbol = motor.construir(lectura);
-    std::ostringstream reporte;
-    reporte << "ÁTOMOS\n";
+    std::ostringstream atomos;
     for (const AtomoRegistrado& atomo : lectura.atomos) {
-        reporte << "  " << atomo.letra << " = " << atomo.significado << '\n';
+        atomos << "  " << atomo.letra << " = " << atomo.significado << '\n';
     }
-    reporte << "\nFÓRMULAS\n";
+    std::ostringstream formulas;
     for (std::size_t indice = 0; indice < lectura.reglas.size(); ++indice) {
-        reporte << "  R" << indice + 1 << ": " << lectura.reglas[indice].textoOriginal
-                << " → " << mostrarFormula(lectura.reglas[indice].formula) << '\n';
+        formulas << "  R" << indice + 1 << ": " << lectura.reglas[indice].textoOriginal
+                 << " → " << mostrarFormula(lectura.reglas[indice].formula) << '\n';
     }
-    reporte << "\nÁRBOL SEMÁNTICO\n";
-    escribirNodo(reporte, arbol.raiz);
-    reporte << "\nRESULTADOS\n  Ramas cerradas: " << arbol.ramasCerradas
-            << "\n  Ramas abiertas: " << arbol.ramasAbiertas << '\n';
+    std::ostringstream arbolTexto;
+    escribirNodo(arbolTexto, arbol.raiz);
+    std::ostringstream resultados;
+    resultados << "Ramas cerradas: " << arbol.ramasCerradas
+               << "\nRamas abiertas: " << arbol.ramasAbiertas << '\n';
     if (arbol.ramasAbiertas == 0) {
-        reporte << "  La base de conocimiento es inconsistente.\n";
+        resultados << "\nLa base de conocimiento es inconsistente.\n";
     } else {
-        reporte << "  La base de conocimiento es consistente.\n  Modelos:\n";
+        resultados << "\nLa base de conocimiento es consistente.\n\nModelos:\n";
         for (const ModeloRama& modelo : arbol.modelos) {
-            reporte << "    Rama " << modelo.idRama << ": ";
+            resultados << "  Rama " << modelo.idRama << ": ";
             for (std::size_t indice = 0; indice < modelo.valores.size(); ++indice) {
-                if (indice != 0) reporte << ", ";
-                reporte << modelo.valores[indice].letra << " = " << modelo.valores[indice].valor;
+                if (indice != 0) resultados << ", ";
+                resultados << modelo.valores[indice].letra << " = " << modelo.valores[indice].valor;
             }
-            reporte << '\n';
+            resultados << '\n';
         }
     }
-    return reporte.str();
+    std::vector<Apartado> apartados = {
+        {"Átomos identificados", atomos.str()},
+        {"Fórmulas", formulas.str()},
+        {"Árbol semántico", arbolTexto.str()},
+        {"Resultados", resultados.str()}
+    };
+    agregarApartadosRamas(apartados, arbol.raiz);
+    return apartados;
 }
 
 NSString* convertirNSString(const std::string& texto) {
@@ -82,8 +114,13 @@ NSString* convertirNSString(const std::string& texto) {
     NSWindow* ventana_;
     NSTextView* textoEntrada_;
     NSTextView* textoSalida_;
+    NSStackView* listaApartados_;
+    NSScrollView* desplazamientoApartados_;
+    std::vector<Apartado> apartados_;
 }
 - (void)analizar:(id)remitente;
+- (void)cambiarApartado:(id)remitente;
+- (void)mostrarApartado:(NSInteger)indice;
 - (void)cargarEjemplo:(id)remitente;
 - (void)limpiarEntrada:(id)remitente;
 @end
@@ -112,11 +149,11 @@ NSString* convertirNSString(const std::string& texto) {
 
     NSView* contenido = [ventana_ contentView];
     [contenido setWantsLayer:YES];
-    contenido.layer.backgroundColor = [NSColor colorWithRed:0.96 green:0.97 blue:0.96 alpha:1.0].CGColor;
+    contenido.layer.backgroundColor = [NSColor colorWithRed:0.84 green:0.90 blue:0.98 alpha:1.0].CGColor;
 
     NSTextField* titulo = [NSTextField labelWithString:@"Motor de inferencia proposicional"];
     [titulo setFont:[NSFont systemFontOfSize:22 weight:NSFontWeightSemibold]];
-    [titulo setTextColor:[NSColor colorWithRed:0.10 green:0.28 blue:0.31 alpha:1.0]];
+    [titulo setTextColor:[NSColor colorWithRed:0.08 green:0.20 blue:0.39 alpha:1.0]];
 
     NSTextField* subtitulo = [NSTextField labelWithString:@"Una regla o un hecho por línea"];
     [subtitulo setFont:[NSFont systemFontOfSize:13]];
@@ -132,6 +169,8 @@ NSString* convertirNSString(const std::string& texto) {
     [textoEntrada_ setRichText:NO];
     [textoEntrada_ setEditable:YES];
     [textoEntrada_ setSelectable:YES];
+    [textoEntrada_ setTextColor:[NSColor colorWithRed:0.10 green:0.19 blue:0.31 alpha:1.0]];
+    [textoEntrada_ setBackgroundColor:[NSColor colorWithRed:0.96 green:0.98 blue:1.00 alpha:1.0]];
     [textoEntrada_ setVerticallyResizable:YES];
     [textoEntrada_ setHorizontallyResizable:NO];
     [textoEntrada_ setAutoresizingMask:NSViewWidthSizable];
@@ -144,24 +183,36 @@ NSString* convertirNSString(const std::string& texto) {
     [desplazamientoEntrada setHasVerticalScroller:YES];
     [desplazamientoEntrada setAutohidesScrollers:YES];
     [desplazamientoEntrada setDrawsBackground:YES];
+    [desplazamientoEntrada setBackgroundColor:[NSColor colorWithRed:0.96 green:0.98 blue:1.00 alpha:1.0]];
     [desplazamientoEntrada setDocumentView:textoEntrada_];
 
     NSButton* boton = [NSButton buttonWithTitle:@"Analizar" target:self action:@selector(analizar:)];
     [boton setBezelStyle:NSBezelStyleRounded];
+    [boton setContentTintColor:[NSColor colorWithRed:0.10 green:0.34 blue:0.68 alpha:1.0]];
     [boton setKeyEquivalent:@"\r"];
     [boton setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
     NSButton* botonEjemplo = [NSButton buttonWithTitle:@"Cargar ejemplo" target:self action:@selector(cargarEjemplo:)];
     [botonEjemplo setBezelStyle:NSBezelStyleRounded];
+    [botonEjemplo setContentTintColor:[NSColor colorWithRed:0.16 green:0.38 blue:0.65 alpha:1.0]];
     NSButton* botonLimpiar = [NSButton buttonWithTitle:@"Limpiar" target:self action:@selector(limpiarEntrada:)];
     [botonLimpiar setBezelStyle:NSBezelStyleRounded];
+    [botonLimpiar setContentTintColor:[NSColor colorWithRed:0.28 green:0.43 blue:0.62 alpha:1.0]];
 
-    NSTextField* etiquetaSalida = [NSTextField labelWithString:@"Análisis y árbol semántico"];
-    [etiquetaSalida setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightMedium]];
+    NSTextField* etiquetaSalida = [NSTextField labelWithString:@"SECCIONES DEL ANÁLISIS"];
+    [etiquetaSalida setFont:[NSFont systemFontOfSize:12 weight:NSFontWeightSemibold]];
+    [etiquetaSalida setTextColor:[NSColor colorWithRed:0.12 green:0.27 blue:0.45 alpha:1.0]];
+    listaApartados_ = [[NSStackView alloc] initWithFrame:NSMakeRect(0, 0, 202, 330)];
+    [listaApartados_ setOrientation:NSUserInterfaceLayoutOrientationVertical];
+    [listaApartados_ setAlignment:NSLayoutAttributeLeading];
+    [listaApartados_ setSpacing:8];
+    [listaApartados_ setDistribution:NSStackViewDistributionFill];
 
     textoSalida_ = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 860, 330)];
     [textoSalida_ setFont:[NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular]];
     [textoSalida_ setEditable:NO];
     [textoSalida_ setSelectable:YES];
+    [textoSalida_ setTextColor:[NSColor colorWithRed:0.10 green:0.19 blue:0.31 alpha:1.0]];
+    [textoSalida_ setBackgroundColor:[NSColor colorWithRed:0.96 green:0.98 blue:1.00 alpha:1.0]];
     [textoSalida_ setRichText:NO];
     [textoSalida_ setVerticallyResizable:YES];
     [textoSalida_ setHorizontallyResizable:NO];
@@ -174,10 +225,21 @@ NSString* convertirNSString(const std::string& texto) {
     [desplazamientoSalida setBorderType:NSBezelBorder];
     [desplazamientoSalida setHasVerticalScroller:YES];
     [desplazamientoSalida setAutohidesScrollers:YES];
+    [desplazamientoSalida setDrawsBackground:YES];
+    [desplazamientoSalida setBackgroundColor:[NSColor colorWithRed:0.96 green:0.98 blue:1.00 alpha:1.0]];
     [desplazamientoSalida setDocumentView:textoSalida_];
 
+    desplazamientoApartados_ = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 190, 330)];
+    [desplazamientoApartados_ setBorderType:NSBezelBorder];
+    [desplazamientoApartados_ setHasVerticalScroller:YES];
+    [desplazamientoApartados_ setAutohidesScrollers:YES];
+    [desplazamientoApartados_ setDrawsBackground:YES];
+    [desplazamientoApartados_ setBackgroundColor:[NSColor colorWithRed:0.91 green:0.95 blue:0.99 alpha:1.0]];
+    [desplazamientoApartados_ setDocumentView:listaApartados_];
+
     NSArray* vistas = @[titulo, subtitulo, etiquetaEntrada, desplazamientoEntrada,
-                        boton, botonEjemplo, botonLimpiar, etiquetaSalida, desplazamientoSalida];
+                        boton, botonEjemplo, botonLimpiar, etiquetaSalida,
+                        desplazamientoApartados_, desplazamientoSalida];
     for (NSView* vista in vistas) {
         [vista setTranslatesAutoresizingMaskIntoConstraints:NO];
         [contenido addSubview:vista];
@@ -204,7 +266,11 @@ NSString* convertirNSString(const std::string& texto) {
         [botonLimpiar.centerYAnchor constraintEqualToAnchor:boton.centerYAnchor],
         [etiquetaSalida.leadingAnchor constraintEqualToAnchor:titulo.leadingAnchor],
         [etiquetaSalida.topAnchor constraintEqualToAnchor:boton.bottomAnchor constant:14],
-        [desplazamientoSalida.leadingAnchor constraintEqualToAnchor:titulo.leadingAnchor],
+        [desplazamientoApartados_.leadingAnchor constraintEqualToAnchor:titulo.leadingAnchor],
+        [desplazamientoApartados_.topAnchor constraintEqualToAnchor:etiquetaSalida.bottomAnchor constant:7],
+        [desplazamientoApartados_.widthAnchor constraintEqualToConstant:220],
+        [desplazamientoApartados_.bottomAnchor constraintEqualToAnchor:contenido.bottomAnchor constant:-22],
+        [desplazamientoSalida.leadingAnchor constraintEqualToAnchor:desplazamientoApartados_.trailingAnchor constant:12],
         [desplazamientoSalida.trailingAnchor constraintEqualToAnchor:desplazamientoEntrada.trailingAnchor],
         [desplazamientoSalida.topAnchor constraintEqualToAnchor:etiquetaSalida.bottomAnchor constant:7],
         [desplazamientoSalida.bottomAnchor constraintEqualToAnchor:contenido.bottomAnchor constant:-22]
@@ -261,6 +327,18 @@ NSString* convertirNSString(const std::string& texto) {
     (void)remitente;
     [textoEntrada_ setString:@""];
     [textoSalida_ setString:@"Escribe una regla o un hecho por línea y pulsa Analizar."];
+    apartados_.clear();
+    NSArray* botones = [[listaApartados_ arrangedSubviews] copy];
+    for (NSView* vista in botones) [listaApartados_ removeArrangedSubview:vista];
+    for (NSView* vista in botones) [vista removeFromSuperview];
+    [botones release];
+    NSButton* aviso = [NSButton buttonWithTitle:@"Analiza para ver apartados" target:nil action:nil];
+    [aviso setBezelStyle:NSBezelStyleRounded];
+    [aviso setFont:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]];
+    [aviso.widthAnchor constraintEqualToConstant:202].active = YES;
+    [aviso.heightAnchor constraintEqualToConstant:36].active = YES;
+    [aviso setEnabled:NO];
+    [listaApartados_ addArrangedSubview:aviso];
     [ventana_ makeFirstResponder:textoEntrada_];
 }
 
@@ -268,8 +346,46 @@ NSString* convertirNSString(const std::string& texto) {
     (void)remitente;
     const char* entradaUTF8 = [[textoEntrada_ string] UTF8String];
     const std::string reglas = entradaUTF8 ? entradaUTF8 : "";
-    const std::string reporte = crearReporte(reglas);
-    [textoSalida_ setString:convertirNSString(reporte)];
+    apartados_ = crearApartados(reglas);
+    NSArray* botones = [[listaApartados_ arrangedSubviews] copy];
+    for (NSView* vista in botones) [listaApartados_ removeArrangedSubview:vista];
+    for (NSView* vista in botones) [vista removeFromSuperview];
+    [botones release];
+    NSInteger indice = 0;
+    for (const Apartado& apartado : apartados_) {
+        NSButton* botonApartado = [NSButton buttonWithTitle:convertirNSString(apartado.first)
+            target:self action:@selector(cambiarApartado:)];
+        [botonApartado setTag:indice++];
+        [botonApartado setButtonType:NSButtonTypePushOnPushOff];
+        [botonApartado setBezelStyle:NSBezelStyleRounded];
+        [botonApartado setControlSize:NSControlSizeRegular];
+        [botonApartado setFont:[NSFont systemFontOfSize:12 weight:NSFontWeightMedium]];
+        [botonApartado setContentTintColor:[NSColor colorWithRed:0.12 green:0.32 blue:0.58 alpha:1.0]];
+        [botonApartado setAlignment:NSTextAlignmentLeft];
+        [botonApartado.widthAnchor constraintEqualToConstant:202].active = YES;
+        [botonApartado.heightAnchor constraintEqualToConstant:36].active = YES;
+        [listaApartados_ addArrangedSubview:botonApartado];
+    }
+    const CGFloat altoLista = std::max<CGFloat>(330, static_cast<CGFloat>(apartados_.size()) * 44 + 16);
+    [listaApartados_ setFrameSize:NSMakeSize(202, altoLista)];
+    NSButton* primerBoton = (NSButton*)[[listaApartados_ arrangedSubviews] firstObject];
+    [primerBoton setState:NSControlStateValueOn];
+    [self mostrarApartado:0];
+}
+
+- (void)cambiarApartado:(id)remitente {
+    const NSInteger indice = [remitente tag];
+    for (NSView* vista in [listaApartados_ arrangedSubviews]) {
+        if ([vista isKindOfClass:[NSButton class]]) {
+            [(NSButton*)vista setState:vista == remitente ? NSControlStateValueOn : NSControlStateValueOff];
+        }
+    }
+    [self mostrarApartado:indice];
+}
+
+- (void)mostrarApartado:(NSInteger)indice {
+    if (indice < 0 || static_cast<std::size_t>(indice) >= apartados_.size()) return;
+    [textoSalida_ setString:convertirNSString(apartados_[static_cast<std::size_t>(indice)].second)];
     [textoSalida_ scrollRangeToVisible:NSMakeRange(0, 0)];
 }
 @end

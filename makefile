@@ -25,7 +25,7 @@ bin/obj/VentanaMac.o: src/VentanaMac.mm $(HEADERS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 start: build
-	./$(EXECUTABLE)
+	open -a "$(CURDIR)/$(EXECUTABLE)"
 
 test: build
 	./$(EXECUTABLE) --pruebas

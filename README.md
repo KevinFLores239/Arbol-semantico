@@ -28,7 +28,7 @@ make rebuild  # Limpia y compila desde cero
 
 ## Usar
 
-La ventana contiene un editor multilínea editable con el ejemplo precargado, botones para analizar, cargar el ejemplo y limpiar la entrada, además del menú **Archivo** con esas mismas acciones. El reporte muestra átomos, fórmulas, árbol textual y modelos. Sustituye el ejemplo por tus reglas, una por línea, y pulsa **Analizar**. También puedes usar **⌘R**. Para usar la versión de consola:
+La ventana contiene un editor multilínea editable con el ejemplo precargado, botones para analizar, cargar el ejemplo y limpiar la entrada, además del menú **Archivo** con esas mismas acciones. Después de analizar, una lista visible permite elegir Átomos identificados, Fórmulas, Árbol semántico, Resultados o cualquier rama (abierta o cerrada); el contenido aparece en el panel contiguo. Sustituye el ejemplo por tus reglas, una por línea, y pulsa **Analizar**. También puedes usar **⌘R**. Para usar la versión de consola:
 
 ```sh
 ./bin/ArbolSemantico --terminal
